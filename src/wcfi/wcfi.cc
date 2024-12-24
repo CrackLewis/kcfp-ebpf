@@ -14,6 +14,7 @@
 #include <iostream>
 
 #include "BPF.h"
+#include "common/log.h"
 
 struct WCFI::Impl {
   std::unique_ptr<ebpf::BPF> bpf_;
@@ -46,28 +47,32 @@ WCFI::~WCFI() {
 
 int WCFI::hooks_init(int count, char **funcs, std::string hook) {
   if (count < 2) {
-    std::cerr << "no kernel function specified" << std::endl;
+    LOG(error) << "no kernel function specified" << std::endl;
     return 0;
   }
 
   impl_->bpf_->get_syscall_fnname("");
 
-  for (int i = 1; i < count; i++) {
-    impl_->hooks_.push_back(funcs[i]);
-    std::cout << funcs[i] << ", ";
+  if (1) {
+    std::string ostr = "hooks: ";
+    for (int i = 1; i < count; i++) {
+      impl_->hooks_.push_back(funcs[i]);
+      if (i != 1) ostr += ", ";
+      ostr += funcs[i];
+    }
+    LOG(info) << ostr << std::endl;
   }
-  std::cout << std::endl;
 
   if (impl_->bpf_) {
     for (auto func : impl_->hooks_) {
       auto res = impl_->bpf_->attach_kprobe(func, hook);
       if (!res.ok()) {
-        std::cerr << "attach: " << res.msg() << std::endl;
+        LOG(error) << "attach: " << res.msg() << std::endl;
         return 0;
       }
     }
   } else {
-    std::cerr << "bpf is invaild" << std::endl;
+    LOG(error) << "bpf is invaild" << std::endl;
     return 0;
   }
   return 1;
@@ -78,7 +83,7 @@ void WCFI::stack_init(std::string stack_name) {
       impl_->bpf_->get_stack_table(stack_name));
 
   if (!impl_->stacks_)
-    std::cerr << "wcfi stacks: " << stack_name << "init failed" << std::endl;
+    LOG(error) << "wcfi stacks: " << stack_name << "init failed" << std::endl;
 }
 
 int WCFI::callsite_bitmap_init(unsigned min, unsigned max,
@@ -89,31 +94,31 @@ int WCFI::callsite_bitmap_init(unsigned min, unsigned max,
               "wcfi_callsite_bitmap"));
 
   if (!impl_->callsite_bitmap_)
-    std::cerr << "failed init callsite bitmap" << std::endl;
+    LOG(error) << "callsite_bitmap_ init failed" << std::endl;
 
   auto wcfi_callsite_bitmap_maxmin = new ebpf::BPFHashTable<unsigned, unsigned>(
       impl_->bpf_->get_hash_table<unsigned, unsigned>(
           "wcfi_callsite_bitmap_maxmin"));
   if (!wcfi_callsite_bitmap_maxmin)
-    std::cerr << "failed init callsite bitmap maxmin" << std::endl;
+    LOG(error) << "wcfi_callsite_bitmap_maxmin init failed" << std::endl;
 
   auto res =
       wcfi_callsite_bitmap_maxmin->update_value(0xffff, max & 0xffffffff);
   if (!res.ok())
-    std::cerr << "set callsite bitmap max" << res.msg() << std::endl;
+    LOG(error) << "callsite_bitmap max: " << res.msg() << std::endl;
 
   res = wcfi_callsite_bitmap_maxmin->update_value(0x0, min & 0xffffffff);
   if (!res.ok())
-    std::cerr << "set callsite bitmap min" << res.msg() << std::endl;
+    LOG(error) << "callsite_bitmap min: " << res.msg() << std::endl;
 
   auto wcfi_init_stack = new ebpf::BPFHashTable<int, unsigned long>(
       impl_->bpf_->get_hash_table<int, unsigned long>("wcfi_init_stack"));
   if (!wcfi_init_stack)
-    std::cerr << "failed init callsite bitmap maxmin" << std::endl;
+    LOG(error) << "wcfi_init_stack init failed" << std::endl;
 
   res = wcfi_init_stack->update_value(0x0, init_stack);
   if (!res.ok())
-    std::cerr << "set callsite bitmap max" << res.msg() << std::endl;
+    LOG(error) << "wcfi_init_stack update_value: " << res.msg() << std::endl;
 
   return 1;
 }
@@ -125,9 +130,10 @@ void WCFI::callsite_bitmap_update(unsigned long addr, uint8_t new_flag) {
   if (impl_->callsite_bitmap_) {
     auto res = impl_->callsite_bitmap_->update_value(idx, new_flag);
     if (!res.ok())
-      std::cerr << "set callsite bitmap: " << res.msg() << std::endl;
+      LOG(error) << "set callsite bitmap: " << res.msg() << std::endl;
   } else
-    std::cerr << "set callsite bitmap: callsite bitmap not inited" << std::endl;
+    LOG(error) << "set callsite bitmap: callsite bitmap not inited"
+               << std::endl;
 }
 
 std::vector<uintptr_t> WCFI::get_stack_addr(int id) {
@@ -138,21 +144,21 @@ int WCFI::ksyms_init(void) {
   impl_->ksyms_ = bcc_symcache_new(-1, nullptr);
 
   if (!impl_->ksyms_) {
-    std::cerr << "failed to create symcache" << std::endl;
+    LOG(error) << "failed to create symcache" << std::endl;
     return 0;
   }
 
   impl_->kstext_ = ksyms_resolve_name("", "_stext");
 
   if (!impl_->kstext_) {
-    std::cerr << "failed to initialize _stext" << std::endl;
+    LOG(error) << "failed to initialize _stext" << std::endl;
     return 0;
   }
 
   impl_->ketext_ = ksyms_resolve_name("", "_etext");
 
   if (!impl_->ketext_) {
-    std::cerr << "failed to initialize _etext" << std::endl;
+    LOG(error) << "failed to initialize _etext" << std::endl;
     return 0;
   }
 
@@ -218,14 +224,14 @@ int WCFI::perf_buffer_init(std::string stack,
       impl_->bpf_->open_perf_buffer(stack, handle_output, NULL, NULL, 0x1000);
 
   if (!res.ok()) {
-    std::cerr << res.msg() << std::endl;
+    LOG(error) << res.msg() << std::endl;
     return 0;
   }
 
   impl_->perf_buffer_ = impl_->bpf_->get_perf_buffer(stack);
 
   if (!impl_->perf_buffer_) {
-    std::cerr << "failed get_perf_buffer" << std::endl;
+    LOG(error) << "BPF::get_perf_buffer failed" << std::endl;
     return 0;
   }
 

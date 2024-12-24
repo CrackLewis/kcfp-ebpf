@@ -8,8 +8,8 @@
  * @copyright Copyright (c) 2024
  *
  */
-// Copyright (C) 2021-2024, HardenedVault (https://hardenedvault.net)
 
+#include <csignal>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
@@ -19,56 +19,73 @@
 #include "BPF.h"
 #include "bcc_syms.h"
 #include "bcc_version.h"
+#include "common/log.h"
 #include "common/objdump.h"
 #include "wcfi/wcfi.h"
 
 WCFI *wcfi;
 
-void handle_output(void *cb_cookie, void *data, int data_size) {
+void wcfi_event_handler(void *cb_cookie, void *data, int data_size) {
   auto info = static_cast<wcfi_event_t *>(data);
   auto addrs = wcfi->get_stack_addr(info->kernel_stack_);
   bool log = true;
 
   if (data_size <= 0) {
-    std::cout << "invaild perf event" << std::endl;
+    LOG(error) << "invaild perf event" << std::endl;
     log = true;
   }
 
-  if (!addrs.size()) std::cout << "stack may lost" << std::endl;
+  if (!addrs.size()) LOG(critical) << "stack exception" << std::endl;
 
   wcfi->ksyms_refresh();
 
-  std::cout << "[" << info->head_.time_ << "]: " << std::endl;
-  std::cout << "PID:" << info->head_.pid_ << " (" << info->head_.name_ << ") "
-            << std::endl;
-  std::cout << "Hook function: " << wcfi->ksyms_resolve(info->head_.ip_) << " ("
-            << std::hex << info->head_.ip_ << std::dec << ")" << std::endl;
-  std::cout << "Stack pointer: " << std::hex << info->reg_sp_ << " - "
-            << info->current_sp_ << std::dec << std::endl;
-  std::cout << "Stack dump(" << info->kernel_stack_ << "):" << std::endl;
+  // std::cout << "[" << info->head_.time_ << "]: " << std::endl;
+  // std::cout << "PID:" << info->head_.pid_ << " (" << info->head_.name_ << ")
+  // "
+  //           << std::endl;
+  // std::cout << "Hook function: " << wcfi->ksyms_resolve(info->head_.ip_) << "
+  // ("
+  //           << std::hex << info->head_.ip_ << std::dec << ")" << std::endl;
+  // std::cout << "Stack pointer: " << std::hex << info->reg_sp_ << " - "
+  //           << info->current_sp_ << std::dec << std::endl;
+  // std::cout << "Stack dump(" << info->kernel_stack_ << "):" << std::endl;
 
+  LOG(wcfi_ev) << "pid=" << info->head_.pid_ << " (" << info->head_.name_
+               << ") "
+               << "hook=" << wcfi->ksyms_resolve(info->head_.ip_)
+               << " stack=" << info->kernel_stack_ << " sp=" << std::hex
+               << info->reg_sp_ << " - " << info->current_sp_ << std::dec
+               << std::endl;
+
+  int addr_id = 0;
   for (auto addr : addrs) {
-    std::cout << "    0x" << std::hex << addr << std::dec << " "
-              << wcfi->ksyms_resolve(addr) << std::endl;
+    LOG(info) << "addr #" << (addr_id++) << ": 0x" << std::hex << addr
+              << std::dec << " " << wcfi->ksyms_resolve(addr) << std::endl;
   }
-  std::cout << std::endl;
+}
 
-  return;
+void sigint_handler(int sig) {
+  LOG(critical) << "exiting due to signal SIGINT" << std::endl;
+  exit(sig);
 }
 
 int main(int argc, char **argv) {
   unsigned long start, end;
 
+  Logger::set_tag_ena(false);
+
+  signal(SIGINT, sigint_handler);
+
   wcfi = new WCFI(BPF_WCFI_PROGRAM);
 
   if (!wcfi->hooks_init(argc, argv, "wcfi_dump_kstack")) {
-    std::cerr << "init bpf wcfi hooks failed" << std::endl;
+    LOG(error) << "WCFI::hooks_init failed" << std::endl;
     exit(1);
   }
 
   wcfi->stack_init("kstack_table");
   if (!wcfi->ksyms_init()) {
-    std::cerr << "init bpf wcfi ksyms failed" << std::endl;
+    LOG(error) << "WCFI::ksyms_init failed" << std::endl;
     exit(1);
   }
 
@@ -77,7 +94,7 @@ int main(int argc, char **argv) {
   std::vector<unsigned long> callsites = read_objdump(
       "/usr/lib/debug/boot/vmlinux-5.15.0-125-generic", start, &end, true);
   if (callsites.size() <= 0) {
-    std::cerr << "failed init callsite" << std::endl;
+    LOG(error) << "read_objdump failed" << std::endl;
     exit(1);
   }
 
@@ -97,7 +114,7 @@ int main(int argc, char **argv) {
     wcfi->callsite_bitmap_update(addr, WCFI_EXCASM_FLAG);
   }
 
-  if (wcfi->perf_buffer_init("wcfi_events", &handle_output)) {
+  if (wcfi->perf_buffer_init("wcfi_events", &wcfi_event_handler)) {
     while (true) {
       wcfi->perf_poll();
     }
