@@ -23,7 +23,7 @@
 #include "common/objdump.h"
 #include "wcfi/wcfi.h"
 
-WCFI *wcfi;
+std::unique_ptr<WCFI> wcfi;
 
 void wcfi_event_handler(void *cb_cookie, void *data, int data_size) {
   auto info = static_cast<wcfi_event_t *>(data);
@@ -38,17 +38,6 @@ void wcfi_event_handler(void *cb_cookie, void *data, int data_size) {
   if (!addrs.size()) LOG(critical) << "stack exception" << std::endl;
 
   wcfi->ksyms_refresh();
-
-  // std::cout << "[" << info->head_.time_ << "]: " << std::endl;
-  // std::cout << "PID:" << info->head_.pid_ << " (" << info->head_.name_ << ")
-  // "
-  //           << std::endl;
-  // std::cout << "Hook function: " << wcfi->ksyms_resolve(info->head_.ip_) << "
-  // ("
-  //           << std::hex << info->head_.ip_ << std::dec << ")" << std::endl;
-  // std::cout << "Stack pointer: " << std::hex << info->reg_sp_ << " - "
-  //           << info->current_sp_ << std::dec << std::endl;
-  // std::cout << "Stack dump(" << info->kernel_stack_ << "):" << std::endl;
 
   LOG(wcfi_ev) << "pid=" << info->head_.pid_ << " (" << info->head_.name_
                << ") "
@@ -76,7 +65,7 @@ int main(int argc, char **argv) {
 
   signal(SIGINT, sigint_handler);
 
-  wcfi = new WCFI(BPF_WCFI_PROGRAM);
+  wcfi = std::make_unique<WCFI>(BPF_WCFI_PROGRAM);
 
   if (!wcfi->hooks_init(argc, argv, "wcfi_dump_kstack")) {
     LOG(error) << "WCFI::hooks_init failed" << std::endl;
