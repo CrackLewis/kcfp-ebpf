@@ -15,6 +15,7 @@
 
 #include "BPF.h"
 #include "common/log.h"
+#include "common/objdump.h"
 
 struct WCFI::Impl {
   std::unique_ptr<ebpf::BPF> bpf_;
@@ -33,20 +34,61 @@ struct WCFI::Impl {
   void *ksyms_;
 };
 
-WCFI::WCFI(const char *wcfi_prog) : impl_(new Impl) {
+WCFI::WCFI(const std::string &kernel_file,
+           const std::vector<std::string> &hooks)
+    : impl_(new Impl) {
   impl_->bpf_ = std::make_unique<ebpf::BPF>();
 
-  auto res = impl_->bpf_->init(wcfi_prog);
-  if (!res.ok()) throw std::runtime_error(res.msg());
+  auto res = impl_->bpf_->init(BPF_WCFI_PROGRAM);
+  if (!res.ok()) {
+    LOG(critical) << "BPF::init failed: " << res.msg() << std::endl;
+    exit(1);
+  }
+
+  if (!hooks_init(hooks)) {
+    LOG(error) << "WCFI::hooks_init failed" << std::endl;
+    exit(1);
+  }
+
+  stack_init("kstack_table");
+  if (!ksyms_init()) {
+    LOG(error) << "WCFI::ksyms_init failed" << std::endl;
+    exit(1);
+  }
+
+  unsigned long start, end;
+  text(&start, &end);
+
+  std::vector<unsigned long> callsites =
+      read_objdump(kernel_file.data(), start, &end, true);
+  if (callsites.size() <= 0) {
+    LOG(error) << "read_objdump failed" << std::endl;
+    exit(1);
+  }
+
+  // refer to main.h BPF_WCFI_PROGRAM
+  unsigned long init_stack = read_kallsyms("init_stack");
+  callsite_bitmap_init(start, end, init_stack);
+
+  for (unsigned long addr : callsites) {
+    callsite_bitmap_update(addr, WCFI_CALLSITE_FLAG);
+  }
+
+  for (auto addr : ksyms_list_address(asm_functions)) {
+    callsite_bitmap_update(addr, WCFI_CALLSITE_FLAG);
+  }
+
+  for (auto addr : ksyms_list_address(exc_asm_functions)) {
+    callsite_bitmap_update(addr, WCFI_EXCASM_FLAG);
+  }
 }
 
 WCFI::~WCFI() {
-  if (impl_->perf_buffer_) delete impl_->perf_buffer_;
-  // TODO: Do we have to delete ksyms_?
+  // DO NOT delete perf_buffer_ or ksyms_, or a segmentation fault may occur.
 }
 
-int WCFI::hooks_init(int count, char **funcs, std::string hook) {
-  if (count < 2) {
+int WCFI::hooks_init(const std::vector<std::string> &hooks) {
+  if (!hooks.size()) {
     LOG(error) << "no kernel function specified" << std::endl;
     return 0;
   }
@@ -55,17 +97,17 @@ int WCFI::hooks_init(int count, char **funcs, std::string hook) {
 
   if (1) {
     std::string ostr = "hooks: ";
-    for (int i = 1; i < count; i++) {
-      impl_->hooks_.push_back(funcs[i]);
-      if (i != 1) ostr += ", ";
-      ostr += funcs[i];
+    int comma = 0;
+    for (auto hook : hooks) {
+      comma ? (ostr += ", ", 0) : comma = 1;
+      ostr += hook;
     }
     LOG(info) << ostr << std::endl;
   }
 
   if (impl_->bpf_) {
-    for (auto func : impl_->hooks_) {
-      auto res = impl_->bpf_->attach_kprobe(func, hook);
+    for (auto func : hooks) {
+      auto res = impl_->bpf_->attach_kprobe(func, "wcfi_dump_kstack");
       if (!res.ok()) {
         LOG(error) << "attach: " << res.msg() << std::endl;
         return 0;

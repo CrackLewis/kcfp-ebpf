@@ -26,5 +26,5 @@ $ make
 ## Running 
 
 ```sh
-$ sudo ./kcfp_ebpf [SYSCALLS]
+$ sudo ./kcfp_ebpf [KERNEL_HOOKS]
 ```

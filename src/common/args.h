@@ -24,21 +24,23 @@ class Args {
     MODE_ABORT,
     MODE_SHOW_HELP,
     MODE_SHOW_VERSION,
-    MODE_CONVERT_KERNEL_TO_CALLSITES,
-    MODE_MONITORING,
+    MODE_MONITORING_BY_KERNEL,
     MODE_MAX
   };
 
   ProgramMode mode() const;
 
-  const std::vector<unsigned long>& callsites() const;
-
   const std::vector<std::string>& hooks() const;
 
+  const std::string& kernel_file() const;
+
  private:
-  std::vector<unsigned long> callsites_;
   std::vector<std::string> hooks_;
-  ProgramMode mode_ = MODE_SHOW_HELP;
+  ProgramMode mode_ = MODE_MONITORING_BY_KERNEL;
+  std::string file_ = "/usr/lib/debug/boot/vmlinux-5.15.0-125-generic";
 };
+
+extern const std::string help_msg;
+extern const std::string version_msg;
 
 #endif  // _ARGS_H

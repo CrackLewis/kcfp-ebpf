@@ -15,8 +15,8 @@
 #include <string>
 #include <vector>
 
-std::vector<unsigned long> read_objdump(const char *objfile,
-                                        unsigned long start, unsigned long *end,
+std::vector<unsigned long> read_objdump(const char* objfile,
+                                        unsigned long start, unsigned long* end,
                                         bool kcore);
 unsigned long read_kallsyms(std::string obj_sym);
 

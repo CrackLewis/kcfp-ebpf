@@ -19,6 +19,7 @@
 #include "BPF.h"
 #include "bcc_syms.h"
 #include "bcc_version.h"
+#include "common/args.h"
 #include "common/log.h"
 #include "common/objdump.h"
 #include "wcfi/wcfi.h"
@@ -59,54 +60,34 @@ void sigint_handler(int sig) {
 }
 
 int main(int argc, char **argv) {
-  unsigned long start, end;
+  signal(SIGINT, sigint_handler);
+
+  Args args(argc, argv);
+  if (args.mode() == Args::MODE_SHOW_HELP) {
+    std::cout << help_msg << std::endl;
+    exit(0);
+  }
+  if (args.mode() == Args::MODE_SHOW_VERSION) {
+    std::cout << version_msg << std::endl;
+    exit(0);
+  }
+  if (args.mode() != Args::MODE_MONITORING_BY_KERNEL) {
+    std::cout << "Invalid arguments" << std::endl;
+    exit(EXIT_FAILURE);
+  }
 
   Logger::set_tag_ena(false);
 
-  signal(SIGINT, sigint_handler);
+  wcfi = std::make_unique<WCFI>(args.kernel_file(), args.hooks());
 
-  wcfi = std::make_unique<WCFI>(BPF_WCFI_PROGRAM);
-
-  if (!wcfi->hooks_init(argc, argv, "wcfi_dump_kstack")) {
-    LOG(error) << "WCFI::hooks_init failed" << std::endl;
-    exit(1);
+  if (!wcfi->perf_buffer_init("wcfi_events", &wcfi_event_handler)) {
+    LOG(error) << "WCFI::perf_buffer_init failed" << std::endl;
+    exit(EXIT_FAILURE);
   }
 
-  wcfi->stack_init("kstack_table");
-  if (!wcfi->ksyms_init()) {
-    LOG(error) << "WCFI::ksyms_init failed" << std::endl;
-    exit(1);
-  }
-
-  wcfi->text(&start, &end);
-
-  std::vector<unsigned long> callsites = read_objdump(
-      "/usr/lib/debug/boot/vmlinux-5.15.0-125-generic", start, &end, true);
-  if (callsites.size() <= 0) {
-    LOG(error) << "read_objdump failed" << std::endl;
-    exit(1);
-  }
-
-  // refer to main.h BPF_WCFI_PROGRAM
-  unsigned long init_stack = read_kallsyms("init_stack");
-  wcfi->callsite_bitmap_init(start, end, init_stack);
-
-  for (unsigned long addr : callsites) {
-    wcfi->callsite_bitmap_update(addr, WCFI_CALLSITE_FLAG);
-  }
-
-  for (auto addr : wcfi->ksyms_list_address(asm_functions)) {
-    wcfi->callsite_bitmap_update(addr, WCFI_CALLSITE_FLAG);
-  }
-
-  for (auto addr : wcfi->ksyms_list_address(exc_asm_functions)) {
-    wcfi->callsite_bitmap_update(addr, WCFI_EXCASM_FLAG);
-  }
-
-  if (wcfi->perf_buffer_init("wcfi_events", &wcfi_event_handler)) {
-    while (true) {
-      wcfi->perf_poll();
-    }
+  int polls = 10000;
+  while (polls--) {
+    wcfi->perf_poll();
   }
 
   return 0;

@@ -26,11 +26,12 @@
 
 class WCFI {
  public:
-  explicit WCFI(const char *wcfi_prog);
+  explicit WCFI(const std::string &kernel_file,
+                const std::vector<std::string> &hooks);
   ~WCFI();
 
   // 初始化wCFI钩子。
-  int hooks_init(int count, char **funcs, std::string hooks);
+  int hooks_init(const std::vector<std::string> &hooks);
 
   void stack_init(std::string stack);
   std::vector<uintptr_t> get_stack_addr(int id);
